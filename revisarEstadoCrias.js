@@ -101,6 +101,7 @@ async function registrarEvento(id, rp) {
       fecha: hoy,
       tipo: "Alta Vaquillona",
       detalle: "Cambio de estado a seca tras completar periodo de crecimiento",
+      usuario: 'FARMERIN',
     });
     console.log(`Evento registrado para el animal ${id} - ${rp}.`);
   } catch (error) {

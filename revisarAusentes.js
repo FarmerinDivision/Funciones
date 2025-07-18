@@ -32,14 +32,12 @@ async function getTambos(tambos = []) {
       .get();
 
     snapshotTambos.forEach(doc => {
-      if (!doc.data().test) {
-        tambos.push({
-          id: doc.id,
-          nombre: doc.data().nombre,
-          raciones: doc.data().raciones // Campo 'raciones'
-        });
-        console.log('Tambo aceptado:' + doc.data().nombre);
-      }
+      tambos.push({
+        id: doc.id,
+        nombre: doc.data().nombre,
+        raciones: doc.data().raciones // Campo 'raciones'
+      });
+      console.log('Tambo encontrado:', doc.data().nombre);
     });
   } catch (error) {
     console.error('Error al obtener los tambos:', error);
@@ -69,7 +67,7 @@ async function procesarEnlace(racionesLink) {
         const DiasAusente = parseInt($(celdas[4]).text().trim(), 10);
 
         // Filtramos solo los registros donde DiasAusente sea mayor a 10
-        if (DiasAusente > 10) {
+        if (DiasAusente > 30) {
           datosFiltrados.push({
             RFID,
             RP,
@@ -91,65 +89,82 @@ async function procesarEnlace(racionesLink) {
 // Función para actualizar el estado del animal
 async function actualizarEstadoAnimal(erp, rp, diasAusentes, idTambo) {
   try {
-    // Eliminar el caracter especial ⛔ del ERP
-    const erpSinCaracter = erp.replace('⛔', '').trim(); // Eliminamos ⛔
+    const erpSinCaracter = erp.replace('⛔', '').trim();
 
-    console.log(`Verificando animal con ERP: ${erpSinCaracter}, RP: ${rp}, DiasAusentes: ${diasAusentes} en Tambo ID: ${idTambo}`);
+    console.log(`🔍 Buscando animal con ERP: ${erpSinCaracter}, RP: ${rp}, DiasAusentes: ${diasAusentes} en Tambo ID: ${idTambo}`);
 
-    // Buscamos el animal en la colección 'animal' usando ERP, RP y idTambo
     const snapshot = await admin.firestore().collection('animal')
-      .where('erp', '==', erpSinCaracter)  // Usamos el ERP sin el carácter especial
+      .where('erp', '==', erpSinCaracter)
       .where('rp', '==', rp)
-      .where('idtambo', '==', idTambo)  // Agregamos la condición por idTambo
+      .where('idtambo', '==', idTambo)
       .get();
 
-    // Verificamos si encontramos documentos
     if (snapshot.empty) {
-      console.log(`No se encontró el animal con ERP: ${erpSinCaracter}, RP: ${rp} en Tambo ID: ${idTambo}`);
+      console.log(`⚠ No se encontró el animal con ERP: ${erpSinCaracter}, RP: ${rp} en Tambo ID: ${idTambo}`);
       return;
     }
 
-    snapshot.forEach(doc => {
-      console.log(`Encontrado el animal con ERP: ${erpSinCaracter}, RP: ${rp}. Actualizando estado...`);
-      
-      // Actualizamos el campo 'estpro' solo si DiasAusentes > 10
-      if (diasAusentes > 10) {
-        doc.ref.update({ estpro: 'seca' })
-          .then(() => {
-            console.log(`¡Animal con ERP: ${erpSinCaracter}, RP: ${rp} actualizado a "seca"!`);
-          })
-          .catch((error) => {
-            console.error('Error al actualizar el estado:', error);
-          });
+    snapshot.forEach(async doc => {
+      console.log(`✅ Animal encontrado: ERP: ${erpSinCaracter}, RP: ${rp}, DiasAusentes: ${diasAusentes}, Tambo ID: ${idTambo}`);
+
+      if (diasAusentes > 30) {
+        console.log(`🔄 Actualizando estado del animal con ID: ${doc.id} a "seca"...`);
+        await doc.ref.update({ estpro: 'seca' });
+        console.log(`✅ ¡Estado actualizado a "seca" para el animal con ERP: ${erpSinCaracter}, RP: ${rp}!`);
+
+        // Crear evento en la subcolección 'eventos'
+        console.log(`📝 Agregando evento de secado para el animal con ERP: ${erpSinCaracter}, RP: ${rp}...`);
+        await doc.ref.collection('eventos').add({
+          fecha: admin.firestore.Timestamp.now(), // Fecha actual
+          tipo: 'Secado',
+          detalle: 'Secado por motivo de ausencia',
+          usuario: 'FARMERIN',
+        });
+
+        console.log(`🎉 Evento de secado registrado para el animal con ERP: ${erpSinCaracter}, RP: ${rp}.`);
       } else {
-        console.log(`Animal con ERP: ${erpSinCaracter}, RP: ${rp} no requiere actualización (DiasAusentes: ${diasAusentes})`);
+        console.log(`ℹ El animal con ERP: ${erpSinCaracter}, RP: ${rp} no requiere actualización (DiasAusentes: ${diasAusentes}).`);
       }
     });
   } catch (error) {
-    console.error('Error al actualizar el estado del animal:', error);
+    console.error('❌ Error al actualizar el estado del animal:', error);
   }
 }
 
 // Función principal
-async function procesarRaciones() {
+async function revisarAusentes() {
   try {
     let tambos = [];
     tambos = await getTambos(tambos);
 
-    for (let tambo of tambos) {
+    // Utilizamos Promise.all para manejar las promesas en paralelo
+    const promises = tambos.map(async (tambo) => {
       if (tambo.raciones) {
         console.log(`Procesando el enlace de raciones para el tambo: ${tambo.nombre}`);
-        const datos = await procesarEnlace(tambo.raciones); // Ahora esta función filtra los datos
+        try {
+          const datos = await procesarEnlace(tambo.raciones); // Ahora esta función filtra los datos
+          
+          // Usamos un bucle for...of para manejar las promesas de forma secuencial
+          const animalPromises = datos.map(async (registro) => {
+            const { RFID, RP, DiasAusente } = registro;
+            console.log(`Datos del registro - RFID: ${RFID}, RP: ${RP}, DiasAusente: ${DiasAusente}`);
+            // Ahora pasamos también el idTambo para actualizar el estado del animal
+            await actualizarEstadoAnimal(RFID, RP, DiasAusente, tambo.id);
+          });
 
-        // Procesamos los datos filtrados
-        datos.forEach(async (registro) => {
-          const { RFID, RP, DiasAusente } = registro;
-          console.log(`Datos del registro - RFID: ${RFID}, RP: ${RP}, DiasAusente: ${DiasAusente}`);
-          // Ahora pasamos también el idTambo para actualizar el estado del animal
-          await actualizarEstadoAnimal(RFID, RP, DiasAusente, tambo.id);
-        });
+          // Esperamos que todas las promesas se resuelvan
+          await Promise.all(animalPromises);
+
+        } catch (error) {
+          console.log(`🚨 El enlace de raciones del tambo ${tambo.nombre} no tiene información o está caído.`);
+        }
+      } else {
+        console.log(`⚠ El campo de raciones del tambo ${tambo.nombre} está vacío, no se procesará.`);
       }
-    }
+    });
+
+    // Esperamos que todas las promesas de los tambos se resuelvan
+    await Promise.all(promises);
 
     console.log('Procesamiento completo.');
   } catch (error) {
@@ -157,8 +172,5 @@ async function procesarRaciones() {
   }
 }
 
-// Exportar la función principal
-module.exports = {
-  procesarRaciones,
-};
-
+// Ejecutamos la función principal
+revisarAusentes();

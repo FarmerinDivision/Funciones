@@ -1,21 +1,32 @@
 const functions = require('firebase-functions');
-const admin = require('firebase-admin');
-admin.initializeApp();
-const firestore = admin.firestore();
+const admin = require('./firebaseAdmin'); // ✅ Usamos el admin inicializado correctamente
+const firestore = admin.firestore;
 
 const runtimeOpts = {
   timeoutSeconds: 540,
   memory: '2GB'
 };
 
-///////// EXPORTANDO FUNCION PARA ANIMALES AUSENTES ////////////
-const { procesarRaciones } = require("./revisarAusentes");
+/////////// MONITOR PROXY WEB EN IFRAME /////////
+const proxyApp = require("./server"); // app Express exportada
 
-exports.procesarRaciones = functions
-  .runWith({ memory: "2GB", timeoutSeconds: 540 })
-  .pubsub.schedule("30 3 * * *")
+exports.proxyMonitor = functions.https.onRequest(proxyApp);
+
+/////////// MONITOR CAÍDO = ENVIAR WHATSAPP /////////
+const { verificarMonitor } = require("./NotificacionWpp");
+exports.verificarMonitor = verificarMonitor;
+
+
+///////// EXPORTANDO FUNCION PARA ANIMALES AUSENTES ////////////
+const { revisarAusentes } = require('./revisarAusentes');
+
+exports.revisarAusentes = functions.pubsub
+  .schedule('30 3 * * *')
+  .timeZone('America/Argentina/Buenos_Aires')
   .onRun(async () => {
-    await procesarRaciones();
+    console.log('Inicio de la función programada: revisarAusentes');
+    await revisarAusentes();
+    console.log('Fin de la función programada: revisarAusentes');
   });
 
 ///////// EXPORTANDO FUNCION PARA ALTAS VAQUILLONAS ////////////
@@ -29,7 +40,6 @@ exports.revisarEstadoCria = functions
   });
 
 ///////// EXPORTANDO FUNCION PARA PARAMETROS ALIMENTACION SEGUN DIAS DE LACTANCIA O LITROS PRODUCIDOS Y RODEOS ////////////
-// Función existente: controlRodeoTest
 exports.controlRodeoTest = functions.runWith(runtimeOpts).pubsub.schedule('30 02 * * *').onRun(async (context) => {
   try {
     const tambos = await getTambos();
@@ -45,8 +55,6 @@ exports.controlRodeoTest = functions.runWith(runtimeOpts).pubsub.schedule('30 02
   }
 });
 
-
-// Función auxiliar para obtener los tambos
 async function getTambos(tambos = []) {
   try {
     const snapshotTambos = await firestore.collection('tambo').get();
@@ -66,7 +74,6 @@ async function getTambos(tambos = []) {
   return tambos;
 }
 
-// Función auxiliar para controlar tambos
 async function controlarTambos(t) {
   const parametros = await getParametros(t.id);
   const snapshotAnimal = await firestore.collection('animal')
@@ -97,7 +104,6 @@ async function controlarTambos(t) {
   return null;
 }
 
-// Función auxiliar para obtener parámetros
 async function getParametros(idtambo, parametros = []) {
   try {
     const snapshotParam = await firestore.collection('parametro')
@@ -123,7 +129,6 @@ async function getParametros(idtambo, parametros = []) {
   return parametros;
 }
 
-// Función auxiliar para controlar animales
 function controlarAnimal(a, parametros) {
   let diasPre;
   let diasLact;
@@ -157,7 +162,6 @@ function controlarAnimal(a, parametros) {
   });
 }
 
-// Función para actualizar alimentación
 async function cambioAlimentacion(p, tipo, a) {
   const myTimestamp = admin.firestore.Timestamp.now();
   let racion = a.racion;
