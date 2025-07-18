@@ -63,4 +63,5 @@ app.get('/verMonitor', async (req, res) => {
   }
 });
 
-module.exports = app;
+app.listen(PORT, () => console.log(`Servidor corriendo en el puerto ${PORT}`));
+
