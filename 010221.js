@@ -1,256 +1,129 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
-admin.initializeApp();
+/*	
+const functions = require("firebase-functions");
+const admin = require("./firebaseAdmin");
 const firestore = admin.firestore();
-//const PromisePool = require('es6-promise-pool');
-//const differenceInDays = require('date-fns/differenceInDays');
 
 
 const runtimeOpts = {
-  timeoutSeconds: 1200,
-  memory: '1GB'
-}
+  timeoutSeconds: 540,
+  memory: "2GB",
+};
 
-exports.controlRodeoTest = functions.pubsub.schedule('30 02 * * *').onRun(async (context) => {
-  try {
-    const tambos = await getTambos();
-    const promesas = tambos.map(async t => {
-      
-      console.log('inicia', t.id);
-      const control = await controlarTambos(t);
-      return control;
+// 🔹 Función programada (respaldo global)
+controlRodeoPrueba = functions
+  .runWith(runtimeOpts)
+  .pubsub.schedule('* * * * *')
+  .onRun(async (context) => {
+    try {
+      const idTamboPrueba = "IClfjUvXc7SIoATvABjR"; // 👈 poné acá tu tambo de prueba
+      console.log("=== INICIO CONTROL RODEO PRUEBA ===");
 
-    });
-    await Promise.all(promesas)
-    console.log('Proceso FInalizado con éxito');
-  } catch (error) {
-    console.error('Error al ejecutar el proceso');
-    console.error(error);
-  }
+      const tambos = await getTambos();
+      const tamboPrueba = tambos.filter((t) => t.id === idTamboPrueba);
 
-});
+      if (tamboPrueba.length === 0) {
+        console.log(`❌ No se encontró el tambo con id ${idTamboPrueba}`);
+        return null;
+      }
 
-async function controlarTambos(t) {
+      for (const t of tamboPrueba) {
+        console.log("✅ Procesando tambo:", t.id, "-", t.nombre);
+        await controlarTambos(t);
+      }
 
-  const parametros = await getParametros(t.id);
-  const animales = await getAnimal(t.id);
-
-  const promesas = animales.map(async a => {
-
-    const control = await controlarAnimal(a, parametros);
-    return control;
-
+      console.log("=== FIN CONTROL RODEO PRUEBA ===");
+    } catch (error) {
+      console.error("❌ Error al ejecutar controlRodeoPrueba:", error);
+    }
   });
-  await Promise.all(promesas)
 
-  return promesas;
+// 🔹 Trigger: cambios en parámetros
+onParametroChange = functions.firestore
+  .document("parametro/{parametroId}")
+  .onWrite(async (change, context) => {
+    const nuevoParametro = change.after.exists ? change.after.data() : null;
+    const idParametro = context.params.parametroId;
 
-}
-
-async function controlarAnimal(a, parametros) {
-
-  //Calcula los kgs de ración de acuerdo a la condición del animal
-  let diasPre;
-  let diasLact;
-  let elapsedTime;
-  let sugerido = 0;
-  
-
-  const nowDate = new Date();
-  const partoDate = new Date(a.fparto);
-
-  //Calcula los dias de preñez
-  if (a.estrep === "vacia") {
-    diasPre = 0;
-  } else {
-    const servicioDate = new Date(a.fservicio);
-    elapsedTime = (nowDate.getTime() - servicioDate.getTime());
-    diasPre = Math.floor(elapsedTime / 1000 / 60 / 60 / 24);
-  }
-
-  elapsedTime = (nowDate.getTime() - partoDate.getTime());
-  //calcula los dias de lactancia
-  diasLact = Math.floor(elapsedTime / 1000 / 60 / 60 / 24);
-
-  //return console.log(a.id,a.fparto,diasLact,a.fservicio,diasPre);
-
-  async function cambioAlimentacion(p) {
-    let racion;
-    let fracion;
-    let rodeo;
-    let cambia;
-    let sugerido;
-    const myTimestamp = admin.firestore.Timestamp.fromDate(new Date());
-    //si la ración es mayor la cambio, sino mantengo 
-    if (parseInt(p.racion) > parseInt(a.racion)) {
-      racion = p.racion;
-      fracion = myTimestamp;
-      cambia = true;
-    } else {
-      //mantengo la misma racion
-      racion = a.racion;
-      fracion = a.fracion;
-      //si la ración es menor a la del animal, alerto
-      if (parseInt(p.racion) < parseInt(a.racion)) {
-        const mensaje = `RP: ${a.rp} - La ración sugerida (${p.racion}) por ${p.um}  es menor a la actual (${a.racion})`;
-        try {
-          const alerta = {
-            idtambo: a.idtambo,
-            mensaje: mensaje,
-            visto: false,
-            fecha: nowDate.getTime()
-          }
-          await firestore.collection('alerta').add(alerta);
-        } catch (error) {
-          console.error('Error al escribir alerta de:', a.rp,a.idtambo, error);
-        }
-
-      }
+    if (!nuevoParametro) {
+      console.log("❌ Parámetro eliminado:", idParametro);
+      return null;
     }
 
-    //si el rodeo es distinto, lo cambia
-    if (p.rodeo !== a.rodeo) {
-      cambia = true;
-      rodeo = p.rodeo;
-    } else {
-      rodeo = a.rodeo;
-    }
+    console.log("📌 Parámetro actualizado:", idParametro, nuevoParametro);
 
-    //si los kg sugeridos son distintos a los actuales, los cambio
-    if (parseInt(p.racion) !== parseInt(a.sugerido)) {
-      cambia = true;
-      sugerido = p.racion;
-    } else {
-      sugerido = a.sugerido;
-    }
+    // Buscar animales del tambo afectado
+    const animalesSnap = await firestore
+      .collection("animal")
+      .where("idtambo", "==", nuevoParametro.idtambo)
+      .where("estpro", "==", "En Ordeñe")
+      .get();
 
-    //si hay cambios, hago update del animal
-    if (cambia === true) {
-      const animal = {
-        racion: racion,
-        fracion: fracion,
-        rodeo: rodeo,
-        sugerido: sugerido
+    for (const doc of animalesSnap.docs) {
+      const data = doc.data();
+      if (!data.fbaja) {
+        await controlarAnimal({ id: doc.id, ...data }, [nuevoParametro]);
       }
-      console.log('cambio en alimentacion ',p.um, a.id);
-      try {
-        await firestore.collection('animal').doc(a.id).update(animal);
-      } catch (error) {
-        console.error('Error al actualizar la alimentación de:', a.rp,p.um, error);
-      }
-
     }
 
     return null;
-  }
-
-  //Calcula la racion sugerida
-  parametros.every(p => {
-
-    let encuentra = false;
-    //Chequea la categoria
-    if (p.categoria === a.categoria) {
-
-      //si es por lactancia controla los dias
-      if (p.um === "Dias Lactancia") {
-
-        //controla condicion
-
-        if (p.condicion === "entre") {
-
-          if (diasLact >= parseInt(p.min) && diasLact <= parseInt(p.max)) {
-            //llamo a la funcion que cambia por días de lactancia
-            cambioAlimentacion(p);
-            //cambio este flag para terminar el loop
-            encuentra = true;
-          }
-        } else if (p.condicion === "menor") {
-
-
-          if (diasLact <= parseInt( p.min)) {
-            //llamo a la funcion que cambia por días de lactancia
-            cambioAlimentacion(p);
-            //cambio este flag para terminar el loop
-            encuentra = true;
-          }
-
-        }
-      } else {
-        //Si es por litros producidos 
-        //controla condicion
-        if (p.condicion === "entre") {
-
-          if (parseInt(a.uc) >= parseInt(p.min) && parseInt(a.uc) <= parseInt(p.max)) {
-            if (a.fracion < a.fuc) {
-              cambioAlimentacion(p);
-            }
-            encuentra = true;
-          }
-
-        } else if (p.condicion === "menor") {
-
-          if (parseInt(a.uc) <= parseInt(p.min)) {
-            if (a.fracion < a.fuc) {
-              cambioAlimentacion(p);
-            }
-            encuentra = true;
-          }
-
-        } else {
-
-          if (parseInt(a.uc) >= parseInt(p.max)) {
-            if (a.fracion < a.fuc) {
-              cambioAlimentacion(p);
-            }
-            encuentra = true;
-          }
-
-        }
-
-      }
-    }
-    //si encuentra condicion dejo de recorrer el array
-    if (encuentra === true) {
-      return false;
-    } else {
-      return true;
-    }
-
-
   });
 
-  return console.log(sugerido);
+// 🔹 Trigger: cambios en animales
+.onAnimalChange = functions.firestore
+  .document("animal/{animalId}")
+  .onWrite(async (change, context) => {
+    const nuevoAnimal = change.after.exists ? change.after.data() : null;
+    const idAnimal = context.params.animalId;
+
+    if (!nuevoAnimal) {
+      console.log("❌ Animal eliminado:", idAnimal);
+      return null;
+    }
+
+    console.log("🐄 Animal actualizado:", idAnimal, nuevoAnimal.rp);
+
+    // Buscar parámetros del tambo
+    const parametrosSnap = await firestore
+      .collection("parametro")
+      .where("idtambo", "==", nuevoAnimal.idtambo)
+      .orderBy("orden")
+      .get();
+
+    const parametros = parametrosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    await controlarAnimal({ id: idAnimal, ...nuevoAnimal }, parametros);
+
+    return null;
+  });
 
 
-}
-
-
-
+// ==================================================
+// === Funciones auxiliares =========================
+// ==================================================
 
 async function getTambos(tambos = []) {
   try {
-    const snapshotTambos = await firestore.collection('tambo').get();
-    snapshotTambos.forEach(doc => {
-      tambos.push({
-        id: doc.id,
-        nombre: doc.data().nombre
-
-      }
-      );
+    const snapshotTambos = await firestore.collection("tambo").get();
+    snapshotTambos.forEach((doc) => {
+      tambos.push({ id: doc.id, nombre: doc.data().nombre });
     });
   } catch (error) {
-    console.error('Error al obtener los tambos');
-    console.error(error);
+    console.error("Error al obtener los tambos:", error);
   }
   return tambos;
-
 }
 
 async function getParametros(idtambo, parametros = []) {
   try {
-    console.log('Busca parametros', idtambo);
-    const snapshotParam = await firestore.collection('parametro').where('idtambo', '==', idtambo).orderBy('orden').get();
-    snapshotParam.forEach(doc => {
+    console.log("📌 Buscando parámetros para tambo:", idtambo);
+    const snapshotParam = await firestore
+      .collection("parametro")
+      .where("idtambo", "==", idtambo)
+      .orderBy("orden")
+      .get();
+
+    snapshotParam.forEach((doc) => {
+      console.log("   → Parametro:", doc.id, doc.data());
       parametros.push({
         id: doc.id,
         rodeo: doc.data().orden,
@@ -259,47 +132,134 @@ async function getParametros(idtambo, parametros = []) {
         min: doc.data().min,
         racion: doc.data().racion,
         um: doc.data().um,
-        categoria: doc.data().categoria
-
-      }
-      );
+        categoria: doc.data().categoria,
+      });
     });
   } catch (error) {
-    console.error('Error al obtener los parametros');
-    console.error(error);
+    console.error("Error al obtener los parámetros:", error);
   }
   return parametros;
-
 }
 
 async function getAnimal(idtambo, animales = []) {
   try {
-    console.log('Busca animales', idtambo);
-    const snapshotAnimal = await firestore.collection('animal').where('idtambo', '==', idtambo).where('estpro', '==', 'En Ordeñe').where('fbaja', '==', '').orderBy('rp').get();
-    snapshotAnimal.forEach(doc => {
-      animales.push({
-        id: doc.id,
-        idtambo:doc.data().idtambo,
-        rp: doc.data().rp,
-        racion: doc.data().racion,
-        fracion: doc.data().fracion,
-        fservicio: doc.data().fservicio,
-        fparto: doc.data().fparto,
-        estrep: doc.data().estrep,
-        categoria: doc.data().categoria,
-        uc: doc.data().uc,
-        fuc: doc.data().fuc,
-        rodeo: doc.data().rodeo
-      }
-      );
+    console.log("📌 Buscando animales activos en tambo:", idtambo);
+    const snapshotAnimal = await firestore
+      .collection("animal")
+      .where("idtambo", "==", idtambo)
+      .where("estpro", "==", "En Ordeñe")
+      .orderBy("rp")
+      .get();
 
+    snapshotAnimal.forEach((doc) => {
+      const data = doc.data();
+      // Aceptamos fbaja null, undefined o string vacío
+      if (!data.fbaja) {
+        console.log("   → Animal:", doc.id, data.rp);
+        animales.push({
+          id: doc.id,
+          ...data,
+        });
+      }
     });
   } catch (error) {
-    console.error('Error al obtener los parametros');
-    console.error(error);
+    console.error("Error al obtener animales:", error);
   }
   return animales;
+}
 
+async function controlarTambos(t) {
+  const parametros = await getParametros(t.id);
+  const animales = await getAnimal(t.id);
+
+  for (const a of animales) {
+    await controlarAnimal(a, parametros);
+  }
+}
+
+async function controlarAnimal(a, parametros) {
+  const nowDate = new Date();
+  const partoDate = a.fparto?.toDate ? a.fparto.toDate() : new Date(a.fparto);
+  const diasLact = isNaN(partoDate) ? null : Math.floor((nowDate - partoDate) / (1000 * 60 * 60 * 24));
+
+  // 1️⃣ Primero evaluamos Dias Lactancia
+  for (const p of parametros) {
+    if (p.categoria === a.categoria && p.um === "Dias Lactancia" && diasLact !== null) {
+      let cumple = false;
+      if (p.condicion === "entre") {
+        cumple = diasLact >= parseInt(p.min) && diasLact <= parseInt(p.max);
+      } else if (p.condicion === "mayor") {
+        cumple = diasLact > parseInt(p.min);
+      } else if (p.condicion === "menor") {
+        cumple = diasLact < parseInt(p.max);
+      }
+
+      if (cumple) {
+        await cambioAlimentacion(p, a);
+        return; // 👈 prioridad a Dias Lactancia, cortamos acá
+      }
+    }
+  }
+
+  // 2️⃣ Si no cumplió ninguno de Dias Lactancia, evaluamos Litros producidos
+  for (const p of parametros) {
+    if (p.categoria === a.categoria && p.um === "Litros producidos") {
+      const litros = parseFloat(a.uc || 0);
+      console.log(`🐄 Animal ${a.rp} - Litros producidos detectados (uc):`, litros);
+
+      if (!isNaN(litros)) {
+        let cumple = false;
+        if (p.condicion === "entre") {
+          cumple = litros >= parseFloat(p.min) && litros <= parseFloat(p.max);
+        } else if (p.condicion === "mayor") {
+          cumple = litros > parseFloat(p.min);
+        } else if (p.condicion === "menor") {
+          cumple = litros < parseFloat(p.max);
+        }
+
+        if (cumple) {
+          await cambioAlimentacion(p, a);
+          return; // 👈 aplicamos el primero de litros que cumpla
+        }
+      }
+    }
+  }
 }
 
 
+async function cambioAlimentacion(p, a) {
+  const myTimestamp = admin.firestore.Timestamp.now();
+  let racion = a.racion;
+  let fracion = a.fracion;
+  let rodeo = a.rodeo;
+  let sugerido = a.sugerido;
+  let cambia = false;
+
+  if (parseInt(p.racion) > parseInt(a.racion)) {
+    racion = p.racion;
+    fracion = myTimestamp;
+    cambia = true;
+  }
+
+  if (p.rodeo !== a.rodeo) {
+    rodeo = p.rodeo;
+    cambia = true;
+  }
+
+  if (parseInt(p.racion) !== parseInt(a.sugerido)) {
+    sugerido = p.racion;
+    cambia = true;
+  }
+
+  if (cambia) {
+    try {
+      console.log(`⚡ Actualizando animal ${a.rp} (${a.id}) con:`, { racion, fracion, rodeo, sugerido });
+      await firestore.collection("animal").doc(a.id).update({ racion, fracion, rodeo, sugerido });
+      console.log("🐄 Alimentación actualizada:", a.rp, p.um, p.condicion);
+    } catch (error) {
+      console.error("❌ Error al actualizar alimentación:", error);
+    }
+  }
+}
+
+*/
