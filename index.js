@@ -163,18 +163,32 @@ async function getParametros(idtambo, parametros = []) {
       .orderBy("orden")
       .get();
 
+    console.log(`📊 Total de parámetros encontrados: ${snapshotParam.size}`);
+
     snapshotParam.forEach((doc) => {
+      const data = doc.data();
+      console.log(`   📋 Parámetro: id=${doc.id}, um=${data.um}, categoria=${data.categoria}, condicion=${data.condicion} ${data.min}-${data.max}, rodeo=${data.orden}`);
+
       parametros.push({
         id: doc.id,
-        rodeo: doc.data().orden,
-        condicion: doc.data().condicion,
-        max: doc.data().max,
-        min: doc.data().min,
-        racion: doc.data().racion,
-        um: doc.data().um,
-        categoria: doc.data().categoria,
+        rodeo: data.orden,
+        condicion: data.condicion,
+        max: data.max,
+        min: data.min,
+        racion: data.racion,
+        um: data.um,
+        categoria: data.categoria,
       });
     });
+
+    // Mostrar resumen por tipo de unidad de medida
+    const porUM = parametros.reduce((acc, p) => {
+      acc[p.um] = (acc[p.um] || 0) + 1;
+      return acc;
+    }, {});
+
+    console.log(`📈 Resumen por UM:`, porUM);
+
   } catch (error) {
     console.error("Error al obtener los parámetros:", error);
   }
@@ -217,7 +231,15 @@ async function controlarTambos(t) {
 async function controlarAnimal(a, parametros) {
   const nowDate = new Date();
 
-  console.log(`➡️ Iniciando control del animal ${a.rp} (${a.id})`);
+  console.log(`\n🔍 === ANÁLISIS DEL ANIMAL ${a.rp} (${a.id}) ===`);
+  console.log(`📊 Datos del animal:`);
+  console.log(`   • RP: ${a.rp}`);
+  console.log(`   • Categoría: ${a.categoria}`);
+  console.log(`   • Ración actual: ${a.racion}`);
+  console.log(`   • Rodeo actual: ${a.rodeo}`);
+  console.log(`   • Sugerido actual: ${a.sugerido}`);
+  console.log(`   • Último control (uc): ${a.uc}`);
+  console.log(`   • Fecha de parto: ${a.fparto}`);
 
   // 🔹 Parseo robusto de fecha de parto
   const partoDate = parseFpartoToDate(a.fparto);
@@ -226,70 +248,129 @@ async function controlarAnimal(a, parametros) {
     ? Math.floor((nowDate - partoDate) / (1000 * 60 * 60 * 24))
     : null;
 
-  console.log(`🐄 Animal ${a.rp} - Categoria:${a.categoria} - fparto:${a.fparto} - diasLact:${diasLact}`);
+  console.log(`📅 Días de lactancia calculados: ${diasLact} días`);
 
   // 1️⃣ Evaluar por días de lactancia
+  console.log(`\n🔹 EVALUANDO POR DÍAS DE LACTANCIA...`);
   const lactanciaPromises = parametros.map(async (p) => {
     if (p.categoria === a.categoria && p.um === "Dias Lactancia" && diasLact !== null) {
+      console.log(`   📋 Analizando parámetro: rodeo ${p.rodeo}, condición ${p.condicion} ${p.min}-${p.max}`);
+
       let cumple = false;
       const min = parseInt(p.min || "0", 10);
       const max = parseInt(p.max || "0", 10);
 
       if (p.condicion === "entre") {
         cumple = diasLact >= min && diasLact <= max;
+        console.log(`      🔍 Comparando: ${diasLact} >= ${min} && ${diasLact} <= ${max} → ${cumple}`);
       } else if (p.condicion === "mayor") {
         cumple = diasLact > max; // para 'mayor', se compara con max
+        console.log(`      🔍 Comparando: ${diasLact} > ${max} → ${cumple}`);
       } else if (p.condicion === "menor") {
         cumple = diasLact < min; // para 'menor', se compara con min
+        console.log(`      🔍 Comparando: ${diasLact} < ${min} → ${cumple}`);
       }
 
       if (cumple) {
         const rangoTexto = p.condicion === 'entre' ? `${min} y ${max}` : (p.condicion === 'menor' ? `${min}` : `${max}`);
         console.log(`✅ Condición cumplida por días: ${diasLact} (${p.condicion} ${rangoTexto})`);
+        console.log(`🏁 ${a.rp} ingresó por Días de Lactancia → rodeo ${p.rodeo}, ración ${p.racion}`);
         await cambioAlimentacion(p, a);
         return true;
       }
       const rangoTextoNo = p.condicion === 'entre' ? `${min} y ${max}` : (p.condicion === 'menor' ? `${min}` : `${max}`);
       console.log(`ℹ️ Sin condición por días: ${diasLact} no cumple (${p.condicion} ${rangoTextoNo})`);
+    } else {
+      console.log(`   ⏭️ Parámetro no aplica: categoria=${p.categoria} vs ${a.categoria}, um=${p.um}, diasLact=${diasLact}`);
     }
     return false;
   });
 
   const lactanciaResults = await Promise.all(lactanciaPromises);
-  if (lactanciaResults.includes(true)) return;
+  if (lactanciaResults.includes(true)) {
+    console.log(`✅ ${a.rp} ingresó por Días de Lactancia - NO se evalúa por litros`);
+    return;
+  }
 
   // 2️⃣ Evaluar por litros producidos
+  console.log(`\n🔹 EVALUANDO POR LITROS PRODUCIDOS...`);
+  console.log(`   🔍 Animal ${a.rp} tiene uc=${a.uc} (tipo: ${typeof a.uc})`);
+
+  // Mostrar todos los parámetros disponibles para litros
+  const parametrosLitros = parametros.filter(p => p.um === "Lts. Producidos");
+  console.log(`   📊 Parámetros de litros disponibles: ${parametrosLitros.length}`);
+  parametrosLitros.forEach((p, idx) => {
+    console.log(`      ${idx + 1}. Categoría: ${p.categoria}, Condición: ${p.condicion} ${p.min}-${p.max}, Rodeo: ${p.rodeo}`);
+  });
+
   const litrosPromises = parametros.map(async (p) => {
-    if (p.categoria === a.categoria && p.um === "Litros producidos") {
-      const litros = parseFloat(String(a.uc || 0).toString().replace(',', '.'));
+    if (p.categoria === a.categoria && p.um === "Lts. Producidos") {
+      console.log(`   📋 Analizando parámetro: rodeo ${p.rodeo}, condición ${p.condicion} ${p.min}-${p.max}`);
+
+      const toNumber = (val) => {
+        if (typeof val === 'number') return val;
+        if (val === null || val === undefined) return NaN;
+        return parseFloat(String(val).replace(',', '.'));
+      };
+
+      const litros = toNumber(a.uc);
+      const min = toNumber(p.min);
+      const max = toNumber(p.max);
+
+      console.log(`      🔢 Valores convertidos: uc=${a.uc} → ${litros}, min=${p.min} → ${min}, max=${p.max} → ${max}`);
+
       if (!isNaN(litros)) {
         let cumple = false;
-        const min = parseFloat(p.min || "0");
-        const max = parseFloat(p.max || "0");
 
         if (p.condicion === "entre") {
-          cumple = litros >= min && litros <= max;
+          const lo = isNaN(min) ? -Infinity : min;
+          const hi = isNaN(max) ? Infinity : max;
+          cumple = litros >= lo && litros <= hi;
+          console.log(`      🔍 Comparando: ${litros} >= ${lo} && ${litros} <= ${hi} → ${cumple}`);
         } else if (p.condicion === "mayor") {
-          cumple = litros > max; // para 'mayor', se compara con max
+          // Usa el umbral definido: prioriza max si existe, si no min
+          const threshold = !isNaN(max) ? max : (!isNaN(min) ? min : NaN);
+          cumple = !isNaN(threshold) && litros > threshold;
+          console.log(`      🔍 Comparando: ${litros} > ${threshold} → ${cumple}`);
         } else if (p.condicion === "menor") {
-          cumple = litros < min; // para 'menor', se compara con min
+          // Usa el umbral definido: prioriza min si existe, si no max
+          const threshold = !isNaN(min) ? min : (!isNaN(max) ? max : NaN);
+          cumple = !isNaN(threshold) && litros < threshold;
+          console.log(`      🔍 Comparando: ${litros} < ${threshold} → ${cumple}`);
         }
 
         if (cumple) {
-          const rangoTexto = p.condicion === 'entre' ? `${min} y ${max}` : (p.condicion === 'menor' ? `${min}` : `${max}`);
+          const rangoTexto = p.condicion === 'entre'
+            ? `${isNaN(min) ? '-∞' : min} : ${isNaN(max) ? '∞' : max}`
+            : (p.condicion === 'menor' ? `${!isNaN(min) ? min : max}` : `${!isNaN(max) ? max : min}`);
           console.log(`✅ Condición cumplida por litros: ${litros} (${p.condicion} ${rangoTexto})`);
+          console.log(`🏁 ${a.rp} ingresó por Litros Producidos (uc=${litros}) → rodeo ${p.rodeo}, ración ${p.racion}`);
           await cambioAlimentacion(p, a);
           return true;
         }
-        const rangoTextoNo = p.condicion === 'entre' ? `${min} y ${max}` : (p.condicion === 'menor' ? `${min}` : `${max}`);
+        const rangoTextoNo = p.condicion === 'entre'
+          ? `${isNaN(min) ? '-∞' : min} : ${isNaN(max) ? '∞' : max}`
+          : (p.condicion === 'menor' ? `${!isNaN(min) ? min : max}` : `${!isNaN(max) ? max : min}`);
         console.log(`ℹ️ Sin condición por litros: ${litros} no cumple (${p.condicion} ${rangoTextoNo})`);
+      } else {
+        console.log(`⚠️ uc inválido para ${a.rp}:`, a.uc);
+      }
+    } else {
+      if (p.um === "Lts. Producidos") {
+        console.log(`   ⏭️ Parámetro no aplica: categoria=${p.categoria} vs ${a.categoria}, um=${p.um}`);
       }
     }
     return false;
   });
 
   const litrosResults = await Promise.all(litrosPromises);
-  if (litrosResults.includes(true)) return;
+  if (litrosResults.includes(true)) {
+    console.log(`✅ ${a.rp} ingresó por Litros Producidos`);
+  } else {
+    console.log(`❌ ${a.rp} NO ingresó en ningún rodeo (ni por días ni por litros)`);
+  }
+
+  console.log(`🔚 === FIN ANÁLISIS DEL ANIMAL ${a.rp} ===\n`);
 }
 
 async function cambioAlimentacion(p, a) {
