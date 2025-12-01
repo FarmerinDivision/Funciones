@@ -70,7 +70,7 @@ const runtimeOpts = {
 
 const FIXED_TAMBO_ID = "jGWqeJjPAW3yJtAZpKJr"; // opcional: setear un ID por defecto si se desea
 
-/* exports.controlRodeoTestOne = functions
+exports.controlRodeoTestOne = functions
   .runWith(runtimeOpts)
   .https.onRequest(async (req, res) => {
     const idtambo = (req.method === 'POST' ? (req.body && (req.body.idtambo || req.body.tamboId)) : null)
@@ -121,7 +121,7 @@ const FIXED_TAMBO_ID = "jGWqeJjPAW3yJtAZpKJr"; // opcional: setear un ID por def
         details: error.message
       });
     }
-  }); */
+  });
 
 
 // ========= NUEVO: Ejecutar control para TODOS los tambos ahora mismo =========
@@ -156,7 +156,7 @@ const FIXED_TAMBO_ID = "jGWqeJjPAW3yJtAZpKJr"; // opcional: setear un ID por def
 }); */
 
 // ========= NUEVO: Endpoint HTTPS para ejecutar control en TODOS los tambos (on-demand) =========
-exports.controlRodeoTest = functions // TODOS LOS TAMBOS EN UNA SOLA VEZ
+/* exports.controlRodeoTest = functions
   .runWith(runtimeOpts)
   .https.onRequest(async (req, res) => {
     const jobStart = Date.now();
@@ -165,41 +165,16 @@ exports.controlRodeoTest = functions // TODOS LOS TAMBOS EN UNA SOLA VEZ
       const tambos = await getTambos();
       console.log(`📦 Tambos a procesar: ${tambos.length}`);
 
-      const results = await Promise.all(
+      await Promise.all(
         tambos.map(async (t) => {
           try {
             console.log("➡️ Procesando tambo:", t.id, "-", t.nombre);
-            return await controlarTambos(t);
+            await controlarTambos(t);
           } catch (e) {
             console.error(`❌ Error procesando tambo ${t.id}:`, e);
-            return { id: t.id, nombre: t.nombre, status: 'ERROR', reason: e.message };
           }
         })
       );
-
-      const processed = results.filter(r => r && r.status === 'PROCESADO');
-      const skipped = results.filter(r => r && r.status !== 'PROCESADO');
-
-      console.log("\n========================================");
-      console.log("       RESUMEN DE EJECUCIÓN");
-      console.log("========================================");
-      console.log("TODOS LOS TAMBOS EN UNA SOLA VEZ");
-      console.log("========================================");
-
-      console.log(`\n✅ TAMBOS PROCESADOS (${processed.length}):`);
-      if (processed.length > 0) {
-        processed.forEach(p => console.log(`   • [${p.id}] ${p.nombre} (${p.animalsCount} animales)`));
-      } else {
-        console.log("   (Ninguno)");
-      }
-
-      console.log(`\n⚠️ TAMBOS OMITIDOS / ERROR (${skipped.length}):`);
-      if (skipped.length > 0) {
-        skipped.forEach(s => console.log(`   • [${s.id}] ${s.nombre} -> ${s.status}: ${s.reason}`));
-      } else {
-        console.log("   (Ninguno)");
-      }
-      console.log("========================================\n");
 
       const jobMs = Date.now() - jobStart;
       console.log(`=== FIN controlRodeoTestNow (${jobMs} ms) ===`);
@@ -207,12 +182,7 @@ exports.controlRodeoTest = functions // TODOS LOS TAMBOS EN UNA SOLA VEZ
       return res.status(200).json({
         status: "OK",
         message: "Control ejecutado para todos los tambos",
-        summary: {
-          total: tambos.length,
-          processed: processed.length,
-          skipped: skipped.length,
-          details: { processed, skipped }
-        },
+        tambosProcesados: tambos.length,
         durationMs: jobMs,
       });
     } catch (error) {
@@ -223,7 +193,7 @@ exports.controlRodeoTest = functions // TODOS LOS TAMBOS EN UNA SOLA VEZ
         details: error.message,
       });
     }
-  });
+  }); */
 
 // ========= Programado diario 02:30 AM (AR) =========
 // exports.controlRodeoTest = functions
@@ -416,33 +386,16 @@ async function controlarTambos(t) {
   // Validar que el tambo tenga campos necesarios
   if (!t || !t.id) {
     console.log(`⚠️ Tambo inválido (sin id) → se omite`);
-    return { id: 'UNKNOWN', nombre: 'UNKNOWN', status: 'OMITIDO', reason: 'Sin ID' };
+    return;
   }
 
   const parametrosPorGrupo = await getParametros(t.id);
-  // Si no hay parámetros en absoluto, podríamos considerar omitir, 
-  // pero la lógica original seguía para buscar animales. 
-  // Sin embargo, si no hay grupos con parámetros, no hará nada útil.
-  // Vamos a dejar que siga para ver si encuentra animales y reportar "Sin parámetros" por grupo.
-
   const animales = await getAnimal(t.id);
-
-  if (animales.length === 0) {
-    console.log(`⚠️ Tambo ${t.id} no tiene animales activos → se omite`);
-    return { id: t.id, nombre: t.nombre, status: 'OMITIDO', reason: 'Sin animales activos' };
-  }
 
   console.log(`🔎 Se controlarán ${animales.length} animales del tambo ${t.id}`);
 
   // Procesar grupo por grupo en serie
   const gruposUnicos = [...new Set(animales.map(a => String(a.grupo ?? "0")))];
-
-  if (gruposUnicos.length === 0) {
-    // Caso raro si hay animales pero no grupos (siempre tienen default "0")
-    return { id: t.id, nombre: t.nombre, status: 'OMITIDO', reason: 'Sin grupos detectados' };
-  }
-
-  let processedCount = 0;
 
   for (const grupoKey of gruposUnicos) {
     console.log(`\n=== 🐄 Procesando GRUPO ${grupoKey} ===`);
@@ -470,19 +423,10 @@ async function controlarTambos(t) {
 
       await controlarAnimal(a, parametrosCategoria);
       console.log(`🟢 Fin análisis animal ${a.rp} en ${Date.now() - aStart} ms`);
-      processedCount++;
     }
   }
 
   console.log(`✅ Finalizado control de ${animales.length} animales del tambo ${t.id} en ${Date.now() - start} ms`);
-
-  return {
-    id: t.id,
-    nombre: t.nombre,
-    status: 'PROCESADO',
-    animalsCount: animales.length,
-    processedAnimals: processedCount
-  };
 }
 
 
@@ -532,13 +476,13 @@ async function controlarAnimal(a, parametros) {
       if (cumple) {
         const rangoTexto = p.condicion === 'entre' ? `${min} y ${max}` : (p.condicion === 'menor' ? `${min}` : `${max}`);
         console.log(`✅ Condición cumplida por días: ${diasLact} (${p.condicion} ${rangoTexto})`);
-
+        
         // Verificar si tiene ración manual
         if (a.racionManual === true) {
           console.log(`⏭️ ${a.rp} tiene raciónManual=true → se saltea la actualización automática`);
           return true;
         }
-
+        
         console.log(`🏁 ${a.rp} ingresó por Días de Lactancia → rodeo ${p.rodeo}, ración ${p.racion}`);
         await cambioAlimentacion(p, a);
         return true;
@@ -609,13 +553,13 @@ async function controlarAnimal(a, parametros) {
             ? `${isNaN(min) ? '-∞' : min} : ${isNaN(max) ? '∞' : max}`
             : (p.condicion === 'menor' ? `${!isNaN(min) ? min : max}` : `${!isNaN(max) ? max : min}`);
           console.log(`✅ Condición cumplida por litros: ${litros} (${p.condicion} ${rangoTexto})`);
-
+          
           // Verificar si tiene ración manual
           if (a.racionManual === true) {
             console.log(`⏭️ ${a.rp} tiene racionManual=true → se saltea la actualización automática`);
             return true;
           }
-
+          
           console.log(`🏁 ${a.rp} ingresó por Litros Producidos (uc=${litros}) → rodeo ${p.rodeo}, ración ${p.racion}`);
           await cambioAlimentacion(p, a);
           return true;
