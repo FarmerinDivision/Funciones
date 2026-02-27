@@ -1,4 +1,4 @@
-const functions = require('firebase-functions');
+
 const admin = require('firebase-admin');
 const axios = require('axios'); // Importamos axios
 const cheerio = require('cheerio');  // Importamos Cheerio
@@ -11,10 +11,7 @@ if (!admin.apps.length) {
   });
 }
 
-const runtimeOpts = {
-  timeoutSeconds: 1200,
-  memory: '1GB',
-};
+
 
 // Configuración para el emulador (si estás usando uno)
 if (process.env.FUNCTIONS_EMULATOR) {
@@ -49,7 +46,7 @@ async function getTambos(tambos = []) {
 async function procesarEnlace(racionesLink) {
   try {
     const response = await axios.get(racionesLink);
-  
+
     // Cargamos el HTML con Cheerio
     const $ = cheerio.load(response.data);
 
@@ -143,7 +140,7 @@ async function revisarAusentes() {
         console.log(`Procesando el enlace de raciones para el tambo: ${tambo.nombre}`);
         try {
           const datos = await procesarEnlace(tambo.raciones); // Ahora esta función filtra los datos
-          
+
           // Usamos un bucle for...of para manejar las promesas de forma secuencial
           const animalPromises = datos.map(async (registro) => {
             const { RFID, RP, DiasAusente } = registro;
@@ -173,4 +170,6 @@ async function revisarAusentes() {
 }
 
 // Ejecutamos la función principal
-revisarAusentes();
+module.exports = {
+  revisarAusentes
+};

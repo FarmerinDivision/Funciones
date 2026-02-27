@@ -8,17 +8,25 @@ const runtimeOpts = {
 };
 
 
-/////////// MONITOR PROXY WEB EN IFRAME /////////
+// ===== ADMINISTRACIÓN =====
+//const { definirAdmins } = require("./definirAdmins");
+//exports.definirAdmins = definirAdmins;
+
+// Consumo
+const consumoApp = require('./consumo');
+exports.proxyConsumo = functions.https.onRequest(consumoApp);
+
+
+// /////// MONITOR PROXY WEB EN IFRAME /////////
 const proxyApp = require("./server"); // app Express exportada
 exports.proxyMonitor = functions.https.onRequest(proxyApp);
 
-/////////// MONITOR CAÍDO = ENVIAR WHATSAPP /////////
-// const { verificarMonitor } = require("./NotificacionWpp");
-// exports.verificarMonitor = verificarMonitor;
+// /////// MONITOR CAÍDO = ENVIAR WHATSAPP /////////
+// // const { verificarMonitor } = require("./NotificacionWpp");
+// // exports.verificarMonitor = verificarMonitor;
 
-///////// EXPORTANDO FUNCION PARA ANIMALES AUSENTES ////////////
+// /////// EXPORTANDO FUNCION PARA ANIMALES AUSENTES ////////////
 const { revisarAusentes } = require('./revisarAusentes');
-
 exports.revisarAusentes = functions.pubsub
   .schedule('30 3 * * *')
   .timeZone('America/Argentina/Buenos_Aires')
@@ -28,9 +36,8 @@ exports.revisarAusentes = functions.pubsub
     console.log('Fin de la función programada: revisarAusentes');
   });
 
-///////// EXPORTANDO FUNCION PARA ALTAS VAQUILLONAS ////////////
+// /////// EXPORTANDO FUNCION PARA ALTAS VAQUILLONAS ////////////
 const { revisarEstadoCria } = require("./revisarEstadoCrias");
-
 exports.revisarEstadoCria = functions
   .runWith({ memory: "2GB", timeoutSeconds: 540 })
   .pubsub.schedule("0 3 * * *")
@@ -38,6 +45,43 @@ exports.revisarEstadoCria = functions
     await revisarEstadoCria();
   });
 
+// ========= convertirFracionTimestamp: convierte fracion string → Timestamp =========
+const { ejecutarConvertirFracionTimestamp } = require('./convertirFracionTimestamp');
+
+// Schedule: '30 1 * * *' = Diariamente a las 1:30 AM
+exports.convertirFracionTimestamp = functions
+  .runWith(runtimeOpts)
+  .pubsub.schedule('30 1 * * *')
+  .timeZone('America/Argentina/Buenos_Aires')
+  .onRun(async () => {
+    try {
+      console.log('=== INICIO DIARIO: convertirFracionTimestamp (Todos los Tambos) ===');
+      // Sin opciones => procesa TODOS los tambos
+      await ejecutarConvertirFracionTimestamp(getTambos, getAnimal, firestore);
+    } catch (error) {
+      console.error('❌ Error en convertirFracionTimestamp:', error);
+    }
+  });
+async function getAnimal(idtambo, animales = []) {
+  try {
+    const snapshotAnimal = await firestore
+      .collection("animal")
+      .where("idtambo", "==", idtambo)
+      .where("estpro", "==", "En Ordeñe")
+      .orderBy("rp")
+      .get();
+
+    snapshotAnimal.forEach((doc) => {
+      const data = doc.data();
+      if (!data.fbaja) {
+        animales.push({ id: doc.id, ...data });
+      }
+    });
+  } catch (error) {
+    console.error("Error al obtener animales:", error);
+  }
+  return animales;
+}
 
 ///////// EXPORTANDO FUNCION PARA PARAMETROS ALIMENTACION SEGUN DIAS DE LACTANCIA O LITROS PRODUCIDOS Y RODEOS ////////////
 // exports.controlRodeoTest = functions
@@ -415,31 +459,7 @@ async function getParametros(idtambo) {
   return parametrosPorGrupo;
 }
 
-async function getAnimal(idtambo, animales = []) {
-  try {
-    const t0 = Date.now();
-    console.log("📌 Buscando animales activos en tambo:", idtambo);
-    const snapshotAnimal = await firestore
-      .collection("animal")
-      .where("idtambo", "==", idtambo)
-      .where("estpro", "==", "En Ordeñe")
-      .orderBy("rp")
-      .get();
 
-    console.log(`📥 Animales leídos del snapshot: ${snapshotAnimal.size}`);
-    snapshotAnimal.forEach((doc) => {
-      const data = doc.data();
-      if (!data.fbaja) {
-        animales.push({ id: doc.id, ...data });
-      }
-    });
-    console.log(`📊 Animales activos sin fbaja: ${animales.length}`);
-    console.log(`⏱️ Tiempo getAnimal(${idtambo}): ${Date.now() - t0} ms`);
-  } catch (error) {
-    console.error("Error al obtener animales:", error);
-  }
-  return animales;
-}
 
 async function controlarTambos(t) {
   const start = Date.now();

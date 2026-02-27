@@ -53,7 +53,7 @@ exports.verificarMonitor = onSchedule(
     schedule: 'every 2 minutes',
     timeZone: 'America/Argentina/Buenos_Aires'
   },
-  async (event) => {
+  async () => {
     try {
       await chequearMonitor();
       logger.info(`[${new Date().toLocaleString()}] ✅ Monitor funcionando correctamente`);
